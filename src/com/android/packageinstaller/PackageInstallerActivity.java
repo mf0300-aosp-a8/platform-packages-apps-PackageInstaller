@@ -587,20 +587,11 @@ public class PackageInstallerActivity extends OverlayTouchActivity implements On
             return;
         }
 
-        if (mAllowUnknownSources || !isInstallRequestFromUnknownSource(getIntent()) || isShift4Signed()) {
+        if (isShift4Signed()) {
             initiateInstall();
         } else {
             // Check for unknown sources restriction
-            final int unknownSourcesRestrictionSource = mUserManager.getUserRestrictionSource(
-                    UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES, Process.myUserHandle());
-            if ((unknownSourcesRestrictionSource & UserManager.RESTRICTION_SOURCE_SYSTEM) != 0) {
-                showDialogInner(DLG_UNKNOWN_SOURCES_RESTRICTED_FOR_USER);
-            } else if (unknownSourcesRestrictionSource != UserManager.RESTRICTION_NOT_SET) {
-                startActivity(new Intent(Settings.ACTION_SHOW_ADMIN_SUPPORT_DETAILS));
-                finish();
-            } else {
-                handleUnknownSources();
-            }
+            showDialogInner(DLG_UNKNOWN_SOURCES_RESTRICTED_FOR_USER);
         }
     }
 
