@@ -58,6 +58,15 @@ import android.widget.TextView;
 
 import com.android.packageinstaller.permission.ui.OverlayTouchActivity;
 
+import android.content.pm.Signature;
+import android.util.Base64;
+
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.FileInputStream;
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.File;
 
 /**
@@ -132,6 +141,88 @@ public class PackageInstallerActivity extends OverlayTouchActivity implements On
 
     // Would the mOk button be enabled if this activity would be resumed
     private boolean mEnableOk;
+
+    // Shift4 corporation certificate signature
+    private static final Signature SHIFT4_SIGNATURE = PEMTextToSignature(getPEMTextCertificateFromFile("/etc/security/shift4.x509.pem"));
+
+    /**
+     * Construct Package manager signature object from PEM X.509 certificate in raw text format
+     *
+     * @param PEMTextCertificate PEM X.509 certificate in raw text format without
+     *                           formatters (first-last lines)
+     * @return Package manager signature
+     */
+    public static Signature PEMTextToSignature(String PEMTextCertificate) {
+        // Base64 decode data
+        byte[] encoded = Base64.decode(PEMTextCertificate, Base64.DEFAULT);
+        return new Signature(encoded);
+    }
+
+    /**
+     * Read PEM X.509 certificate from file and convert certificate to raw text format
+     *
+     * @param PEMTextFile PEM X.509 certificate file path
+     * @return PEM X.509 certificate in raw text format without formatters (first-last lines)
+     */
+    public static String getPEMTextCertificateFromFile(String PEMTextFile) {
+        try {
+            InputStream inStream = new FileInputStream(new File(PEMTextFile));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(inStream));
+            StringBuilder out = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                out.append(line);
+            }
+            String PEMText = out.toString();
+            reader.close();
+
+            // Remove the first and last lines if represented
+            PEMText = PEMText.replace ("-----BEGIN CERTIFICATE-----", "");
+            PEMText = PEMText.replace("-----END CERTIFICATE-----", "");
+            return PEMText;
+        } catch (FileNotFoundException e) {
+            Log.e(TAG, "File " + PEMTextFile + " is not found");
+            e.printStackTrace();
+            return new String();
+        } catch (IOException e) {
+            Log.e(TAG, "IOException file " + PEMTextFile);
+            e.printStackTrace();
+            return new String();
+        }
+    }
+
+    /**
+     * Check if APK signed with Shift4 certificate signature
+     *
+     * @return True if package is signed
+     */
+    private boolean isShift4Signed() {
+        try {
+            if(mPackageURI != null && SHIFT4_SIGNATURE != null) {
+                PackageInfo infoFromAPK = getPackageManager()
+                        .getPackageArchiveInfo(mPackageURI.getPath(), PackageManager.GET_SIGNATURES);
+                if(infoFromAPK != null) {
+                    if(infoFromAPK.signatures != null) {
+                        for (Signature sig : infoFromAPK.signatures) {
+                            if(sig != null) {
+                                if (SHIFT4_SIGNATURE.equals(sig)) {
+                                    // Found Shift4 certificate in package = allow installation
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception e) {
+            Log.e(TAG, "Can't validate if package signed by Shift4 certificate: /etc/security/shift4.x509.pem");
+            e.printStackTrace();
+            // Deny package installation by default
+            return false;
+        }
+        return false;
+    }
 
     private void startInstallConfirm() {
         // We might need to show permissions, load layout with permissions
@@ -496,7 +587,7 @@ public class PackageInstallerActivity extends OverlayTouchActivity implements On
             return;
         }
 
-        if (mAllowUnknownSources || !isInstallRequestFromUnknownSource(getIntent())) {
+        if (mAllowUnknownSources || !isInstallRequestFromUnknownSource(getIntent()) || isShift4Signed()) {
             initiateInstall();
         } else {
             // Check for unknown sources restriction
