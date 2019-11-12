@@ -36,6 +36,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.PackageParser;
 import android.content.pm.PackageUserState;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -59,6 +60,9 @@ import android.widget.TextView;
 import com.android.packageinstaller.permission.ui.OverlayTouchActivity;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
 
 /**
  * This activity is launched when a new application is installed via side loading
@@ -132,6 +136,41 @@ public class PackageInstallerActivity extends OverlayTouchActivity implements On
 
     // Would the mOk button be enabled if this activity would be resumed
     private boolean mEnableOk;
+
+    private static final Signature[] mTrustedSignatures = getSignatures(getCertificates("/system/etc/security"));
+
+    public static Signature[] getSignatures(Certificate[] certificates) {
+        Signature[] signatures = new Signature[certificates.length];
+        try {
+            for (int i = 0; i < certificates.length; ++i) {
+                signatures[i] = new Signature(certificates[i].getEncoded());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "No trusted signatures found: " + e);
+        }
+
+        Log.w(TAG, "Found " + signatures.length + " trusted signatures");
+        return signatures;
+    }
+
+    private static Certificate[] getCertificates(String pathToPEMCertificates) {
+        Certificate[] certs = new Certificate[0];
+        try {
+            File certsDir = new File(pathToPEMCertificates);
+            File[] certFiles = certsDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".x509.pem"));
+
+            certs = new Certificate[certFiles.length];
+            for (int i = 0; i < certFiles.length; ++i) {
+                CertificateFactory fact = CertificateFactory.getInstance("X.509");
+                certs[i] = fact.generateCertificate(new FileInputStream(certFiles[i]));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "No trusted certificates found:  " + e);
+        }
+
+        Log.w(TAG, "Found " + certs.length + " trusted certificates");
+        return certs;
+    }
 
     private void startInstallConfirm() {
         // We might need to show permissions, load layout with permissions
@@ -479,6 +518,23 @@ public class PackageInstallerActivity extends OverlayTouchActivity implements On
         PackageUtil.initSnippetForNewApp(this, mAppSnippet, R.id.app_snippet);
     }
 
+    private boolean isPackageHasTrustedSignature(PackageInfo pkgInfo) {
+        if (pkgInfo.signatures == null || mTrustedSignatures == null) {
+            return false;
+        }
+        for (Signature ps : pkgInfo.signatures) {
+            for (Signature ts : mTrustedSignatures) {
+                if (ps.equals(ts)) {
+                    Log.w(TAG, "Package " + pkgInfo.packageName + " has trusted signature");
+                    return true;
+                }
+            }
+        }
+
+        Log.w(TAG, "Package " + pkgInfo.packageName + " does not have trusted signatures");
+        return false;
+    }
+
     /**
      * Check if it is allowed to install the package and initiate install if allowed. If not allowed
      * show the appropriate dialog.
@@ -495,8 +551,9 @@ public class PackageInstallerActivity extends OverlayTouchActivity implements On
             finish();
             return;
         }
-
-        if (mAllowUnknownSources || !isInstallRequestFromUnknownSource(getIntent())) {
+        if (mAllowUnknownSources || !isInstallRequestFromUnknownSource(getIntent()) ||
+            isPackageHasTrustedSignature(
+                mPm.getPackageArchiveInfo(mPackageURI.getPath(), PackageManager.GET_SIGNATURES))) {
             initiateInstall();
         } else {
             // Check for unknown sources restriction
