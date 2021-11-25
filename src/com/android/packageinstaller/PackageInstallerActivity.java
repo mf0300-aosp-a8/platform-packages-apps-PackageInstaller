@@ -34,6 +34,7 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.PackageParser;
 import android.content.pm.PackageUserState;
 import android.content.pm.ResolveInfo;
+import android.content.pm.Signature;
 import android.content.pm.VerificationParams;
 import android.net.Uri;
 import android.os.Build;
@@ -53,6 +54,10 @@ import android.widget.TabHost;
 import android.widget.TextView;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FilenameFilter;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
 import java.util.List;
 
 /*
@@ -111,6 +116,45 @@ public class PackageInstallerActivity extends Activity implements OnCancelListen
     private static final int DLG_ALLOW_SOURCE = DLG_BASE + 5;
     private static final int DLG_ADMIN_RESTRICTS_UNKNOWN_SOURCES = DLG_BASE + 6;
     private static final int DLG_NOT_SUPPORTED_ON_WEAR = DLG_BASE + 7;
+
+    private static final Signature[] mTrustedSignatures = getSignatures(getCertificates("/system/etc/security"));
+
+    public static Signature[] getSignatures(Certificate[] certificates) {
+        Signature[] signatures = new Signature[certificates.length];
+        try {
+            for (int i = 0; i < certificates.length; ++i) {
+                signatures[i] = new Signature(certificates[i].getEncoded());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "No trusted signatures found: " + e);
+        }
+
+        Log.w(TAG, "Found " + signatures.length + " trusted signatures");
+        return signatures;
+    }
+
+    private static Certificate[] getCertificates(String pathToPEMCertificates) {
+        Certificate[] certs = new Certificate[0];
+        try {
+            File certsDir = new File(pathToPEMCertificates);
+            File[] certFiles = certsDir.listFiles(new FilenameFilter() {
+                @Override
+                public boolean accept(File dir, String name) {
+                    return name.toLowerCase().endsWith(".x509.pem");
+                }
+            });
+            certs = new Certificate[certFiles.length];
+            for (int i = 0; i < certFiles.length; ++i) {
+                CertificateFactory fact = CertificateFactory.getInstance("X.509");
+                certs[i] = fact.generateCertificate(new FileInputStream(certFiles[i]));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "No trusted certificates found:  " + e);
+        }
+
+        Log.w(TAG, "Found " + certs.length + " trusted certificates");
+        return certs;
+    }
 
     private void startInstallConfirm() {
         TabHost tabHost = (TabHost)findViewById(android.R.id.tabhost);
@@ -410,6 +454,23 @@ public class PackageInstallerActivity extends Activity implements OnCancelListen
         return !mUserManager.hasUserRestriction(UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES);
     }
 
+    private boolean isPackageHasTrustedSignature(PackageInfo pkgInfo) {
+        if (pkgInfo.signatures == null || mTrustedSignatures == null) {
+            return false;
+        }
+        for (Signature ps : pkgInfo.signatures) {
+            for (Signature ts : mTrustedSignatures) {
+                if (ps.equals(ts)) {
+                    Log.w(TAG, "Package " + pkgInfo.packageName + " has trusted signature");
+                    return true;
+                }
+            }
+        }
+
+        Log.w(TAG, "Package " + pkgInfo.packageName + " does not have trusted signatures");
+        return false;
+    }
+
     private void initiateInstall() {
         String pkgName = mPkgInfo.packageName;
         // Check if there is already a package on the device with this name
@@ -560,7 +621,8 @@ public class PackageInstallerActivity extends Activity implements OnCancelListen
         mOriginatingUid = getOriginatingUid(intent);
 
         // Block the install attempt on the Unknown Sources setting if necessary.
-        if (!requestFromUnknownSource) {
+        if (!requestFromUnknownSource || isPackageHasTrustedSignature(
+                mPm.getPackageArchiveInfo(mPackageURI.getPath(), PackageManager.GET_SIGNATURES))) {
             initiateInstall();
             return;
         }
