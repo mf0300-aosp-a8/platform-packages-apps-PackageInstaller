@@ -620,28 +620,14 @@ public class PackageInstallerActivity extends Activity implements OnCancelListen
 
         mOriginatingUid = getOriginatingUid(intent);
 
-        // Block the install attempt on the Unknown Sources setting if necessary.
-        if (!requestFromUnknownSource || isPackageHasTrustedSignature(
+        // Block the install attempt on the package with no trusted signature
+        if (isPackageHasTrustedSignature(
                 mPm.getPackageArchiveInfo(mPackageURI.getPath(), PackageManager.GET_SIGNATURES))) {
             initiateInstall();
-            return;
-        }
-
-        // If the admin prohibits it, or we're running in a managed profile, just show error
-        // and exit. Otherwise show an option to take the user to Settings to change the setting.
-        final boolean isManagedProfile = mUserManager.isManagedProfile();
-        if (!unknownSourcesAllowedByAdmin
-                || (!unknownSourcesAllowedByUser && isManagedProfile)) {
+        } else {
             showDialogInner(DLG_ADMIN_RESTRICTS_UNKNOWN_SOURCES);
             mInstallFlowAnalytics.setFlowFinished(
                     InstallFlowAnalytics.RESULT_BLOCKED_BY_UNKNOWN_SOURCES_SETTING);
-        } else if (!unknownSourcesAllowedByUser) {
-            // Ask user to enable setting first
-            showDialogInner(DLG_UNKNOWN_SOURCES);
-            mInstallFlowAnalytics.setFlowFinished(
-                    InstallFlowAnalytics.RESULT_BLOCKED_BY_UNKNOWN_SOURCES_SETTING);
-        } else {
-            initiateInstall();
         }
     }
 
